@@ -14,19 +14,15 @@ from apscheduler.schedulers.background import BackgroundScheduler
 TOKEN = os.getenv('TELEGRAM_TOKEN')
 ADMIN_ID = 7346983056 
 G_JSON = os.getenv('G_SHEETS_JSON')
-# Koyeb yêu cầu ứng dụng chạy trên PORT do họ cung cấp hoặc mặc định 8000
+# [cite_start]Koyeb cung cấp biến PORT, nếu không có sẽ mặc định chạy 8000 [cite: 1]
 PORT = int(os.environ.get("PORT", 8000))
 
-# --- KHỞI TẠO WEB SERVER ---
+# --- KHỞI TẠO WEB SERVER (Để Cron-job.org ping) ---
 server = Flask(__name__)
 
 @server.route('/')
 def ping():
     return "Bot is alive and healthy!", 200
-
-def run_web_server():
-    # Quan trọng: Phải là host="0.0.0.0" để Koyeb có thể routing
-    server.run(host="0.0.0.0", port=PORT)
 
 # --- KẾT NỐI GOOGLE SHEETS ---
 def get_sheet():
@@ -70,46 +66,45 @@ def handle_commands(message):
     bot.send_chat_action(message.chat.id, 'typing')
 
     try:
-        # Lấy dữ liệu mới nhất
         data = sheet.batch_get(['B1', 'B2'])
         raw_balance = data[0][0][0] if len(data[0]) > 0 and len(data[0][0]) > 0 else "0"
         current_balance = int(str(raw_balance).replace(',', '').strip() or 0)
         last_date = data[1][0][0] if len(data[1]) > 0 and len(data[1][0]) > 0 else ""
 
         if text == '/start':
-            bot.reply_to(message, "✅ **Kết nối Koyeb thành công!**\nSố dư sẽ được cập nhật trực tiếp từ Google Sheets.", parse_mode="Markdown")
-
+            bot.reply_to(message, "✅ **Kết nối Koyeb thành công!**\nSố dư cập nhật từ Google Sheets.", parse_mode="Markdown")
         elif text == '/sodu':
-            bot.reply_to(message, f"💰 Số dư hiện tại: **{current_balance:,} VNĐ**", parse_mode="Markdown")
-
+            bot.reply_to(message, f"💰 Số dư: **{current_balance:,} VNĐ**", parse_mode="Markdown")
         elif text.startswith('/rut'):
             try:
                 val_rut = int(text.split()[1])
                 if val_rut > current_balance:
-                    bot.reply_to(message, f"❌ Không đủ! Hiện có: {current_balance:,}đ")
+                    bot.reply_to(message, f"❌ Không đủ! Có: {current_balance:,}đ")
                 else:
                     new_val = current_balance - val_rut
                     sheet.update('B1', [[new_val]])
                     bot.reply_to(message, f"💸 Đã rút {val_rut:,}đ.\n💰 Còn lại: **{new_val:,} VNĐ**", parse_mode="Markdown")
             except: 
                 bot.reply_to(message, "⚠️ Cú pháp: `/rut 50000`")
-
         elif text in ['/cong', '/tru']:
             if last_date == today:
                 return bot.reply_to(message, "⚠️ Hôm nay bạn đã điểm danh rồi!")
-
             new_val = current_balance + 30000 if text == '/cong' else current_balance - 10000
             sheet.update('B1', [[new_val]])
             sheet.update('B2', [[today]])
             bot.reply_to(message, f"✅ Đã cập nhật!\n💰 Số dư mới: **{new_val:,} VNĐ**", parse_mode="Markdown")
-
     except Exception as e:
-        bot.reply_to(message, "❌ Lỗi kết nối dữ liệu. Vui lòng kiểm tra file Sheets.")
         print(f"Error: {e}")
 
+# --- KHỞI CHẠY ---
+def run_bot():
+    bot.infinity_polling(timeout=20, long_polling_timeout=10)
+
 if __name__ == "__main__":
-    # Chạy Web Server ở luồng riêng
-    Thread(target=run_web_server, daemon=True).start()
-    # Bắt đầu nhận tin nhắn từ Telegram
-    print("Bot is starting...")
-    bot.infinity_polling(timeout=10, long_polling_timeout=5)
+    # 1. Chạy bot ở luồng phụ (Thread)
+    t = Thread(target=run_bot)
+    t.start()
+    
+    # [cite_start]2. Chạy Flask ở luồng chính (Main Thread) [cite: 1]
+    # [cite_start]host="0.0.0.0" là bắt buộc để Koyeb có thể truy cập [cite: 1]
+    server.run(host="0.0.0.0", port=PORT)
