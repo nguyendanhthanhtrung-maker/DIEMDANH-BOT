@@ -12,32 +12,39 @@ from apscheduler.schedulers.background import BackgroundScheduler
 
 # --- CẤU HÌNH HỆ THỐNG ---
 TOKEN = os.getenv('TELEGRAM_TOKEN')
-MY_ID = 7346983056 
+ADMIN_ID = 7346983056 
 G_JSON = os.getenv('G_SHEETS_JSON')
+# Koyeb yêu cầu ứng dụng chạy trên PORT do họ cung cấp hoặc mặc định 8000
 PORT = int(os.environ.get("PORT", 8000))
 
-# --- KHỞI TẠO WEB SERVER (Để bot không bị sleep) ---
+# --- KHỞI TẠO WEB SERVER ---
 server = Flask(__name__)
+
 @server.route('/')
-def ping(): return "Bot is alive!", 200
+def ping():
+    return "Bot is alive and healthy!", 200
 
 def run_web_server():
+    # Quan trọng: Phải là host="0.0.0.0" để Koyeb có thể routing
     server.run(host="0.0.0.0", port=PORT)
 
 # --- KẾT NỐI GOOGLE SHEETS ---
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds_dict = json.loads(G_JSON)
-creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-client = gspread.authorize(creds)
-# Bot sẽ luôn mở file "BotData" mỗi khi cần lấy dữ liệu mới nhất
-sheet = client.open("BotData").sheet1
+def get_sheet():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds_dict = json.loads(G_JSON)
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+    return client.open("BotData").sheet1
+
+sheet = get_sheet()
 bot = telebot.TeleBot(TOKEN)
 
 # --- NHẮC HẸN 6H SÁNG ---
 def send_daily_reminder():
     try:
-        bot.send_message(MY_ID, "☀️ **6:00 AM:** Đừng quên gõ `/cong` để nhận thưởng hôm nay chủ nhân nhé!", parse_mode="Markdown")
-    except Exception as e: print(f"Lỗi gửi nhắc hẹn: {e}")
+        bot.send_message(ADMIN_ID, "☀️ **6:00 AM:** Đừng quên gõ `/cong` để nhận thưởng hôm nay chủ nhân nhé!", parse_mode="Markdown")
+    except Exception as e: 
+        print(f"Lỗi gửi nhắc hẹn: {e}")
 
 scheduler = BackgroundScheduler(timezone=pytz.timezone('Asia/Ho_Chi_Minh'))
 scheduler.add_job(send_daily_reminder, 'cron', hour=6, minute=0)
@@ -53,7 +60,7 @@ def check_spam(user_id):
     return False
 
 # --- XỬ LÝ LỆNH ---
-@bot.message_handler(func=lambda message: message.from_user.id == MY_ID)
+@bot.message_handler(func=lambda message: message.from_user.id == ADMIN_ID)
 def handle_commands(message):
     if check_spam(message.from_user.id): return
     
@@ -63,46 +70,46 @@ def handle_commands(message):
     bot.send_chat_action(message.chat.id, 'typing')
 
     try:
-        # Lấy dữ liệu thời gian thực từ Sheets 
-        # B1: Số dư, B2: Ngày điểm danh cuối
+        # Lấy dữ liệu mới nhất
         data = sheet.batch_get(['B1', 'B2'])
-        
-        # Xử lý trường hợp bạn đang để trống ô trên Sheet
         raw_balance = data[0][0][0] if len(data[0]) > 0 and len(data[0][0]) > 0 else "0"
         current_balance = int(str(raw_balance).replace(',', '').strip() or 0)
-        
         last_date = data[1][0][0] if len(data[1]) > 0 and len(data[1][0]) > 0 else ""
 
         if text == '/start':
-            bot.reply_to(message, "✅ **Kết nối thành công!**\nBạn có thể chỉnh sửa trực tiếp số dư tại ô **B1** trên Google Sheets, Bot sẽ cập nhật ngay lập tức.", parse_mode="Markdown")
+            bot.reply_to(message, "✅ **Kết nối Koyeb thành công!**\nSố dư sẽ được cập nhật trực tiếp từ Google Sheets.", parse_mode="Markdown")
 
         elif text == '/sodu':
-            bot.reply_to(message, f"💰 Số dư thực tế trên Sheet: **{current_balance:,} VNĐ**", parse_mode="Markdown")
+            bot.reply_to(message, f"💰 Số dư hiện tại: **{current_balance:,} VNĐ**", parse_mode="Markdown")
 
         elif text.startswith('/rut'):
             try:
                 val_rut = int(text.split()[1])
                 if val_rut > current_balance:
-                    bot.reply_to(message, f"❌ Không đủ! Sheet hiện có: {current_balance:,}đ")
+                    bot.reply_to(message, f"❌ Không đủ! Hiện có: {current_balance:,}đ")
                 else:
                     new_val = current_balance - val_rut
-                    sheet.update('B1', [[new_val]]) # Cập nhật ngược lại Sheet 
+                    sheet.update('B1', [[new_val]])
                     bot.reply_to(message, f"💸 Đã rút {val_rut:,}đ.\n💰 Còn lại: **{new_val:,} VNĐ**", parse_mode="Markdown")
-            except: bot.reply_to(message, "⚠️ Cú pháp: `/rut 50000`")
+            except: 
+                bot.reply_to(message, "⚠️ Cú pháp: `/rut 50000`")
 
         elif text in ['/cong', '/tru']:
             if last_date == today:
-                return bot.reply_to(message, "⚠️ Sheet ghi nhận bạn đã điểm danh hôm nay rồi!")
+                return bot.reply_to(message, "⚠️ Hôm nay bạn đã điểm danh rồi!")
 
             new_val = current_balance + 30000 if text == '/cong' else current_balance - 10000
             sheet.update('B1', [[new_val]])
             sheet.update('B2', [[today]])
-            bot.reply_to(message, f"✅ Đã cập nhật lên Sheet!\n💰 Số dư mới: **{new_val:,} VNĐ**", parse_mode="Markdown")
+            bot.reply_to(message, f"✅ Đã cập nhật!\n💰 Số dư mới: **{new_val:,} VNĐ**", parse_mode="Markdown")
 
     except Exception as e:
-        bot.reply_to(message, "❌ Lỗi: Không đọc được dữ liệu từ Sheet. Hãy kiểm tra xem bạn có đang nhập sai định dạng ở ô B1 không.")
+        bot.reply_to(message, "❌ Lỗi kết nối dữ liệu. Vui lòng kiểm tra file Sheets.")
         print(f"Error: {e}")
 
 if __name__ == "__main__":
-    Thread(target=run_web_server).start()
+    # Chạy Web Server ở luồng riêng
+    Thread(target=run_web_server, daemon=True).start()
+    # Bắt đầu nhận tin nhắn từ Telegram
+    print("Bot is starting...")
     bot.infinity_polling(timeout=10, long_polling_timeout=5)
